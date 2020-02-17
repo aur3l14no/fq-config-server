@@ -3,6 +3,7 @@ import re
 import requests
 import json
 import base64
+from functools import wraps
 from flask import Flask, request, abort, make_response
 
 clash_config_template = '''
@@ -80,32 +81,40 @@ def vmess_to_clash_json(vmess_url):
 
 
 def require_auth(f):
+    with open('config.yml') as fp:
+        token = yaml.safe_load(fp.read())['token']
     def g():
         x = request.args.get('token', '')
-        if x != 'xiaozhizhu233':
+        if x != token:
             abort(401)
         return f()
+    g.__name__ = f.__name__
     return g
 
 app = Flask(__name__) #记住这里的变量名app
 
 @app.route('/')
 def hello():
-    return 'hello docker&flask'
+    return 'Hey, fuck gfw!'
 
-@require_auth
 @app.route('/stat')
+@require_auth
 def stat():
-    with open('config.yaml') as f:
+    with open('config.yml') as f:
         return f.read()
 
-@require_auth
 @app.route('/clash')
+@require_auth
 def export_clash():
     response = make_response(export_clash_config())
     response.headers['Content-Type'] = 'application/octet-stream; charset=utf-8'
     response.headers['Content-Disposition'] = 'attachment; filename="config.yml"'
     return response
 
+@app.route('/subscribe')
+@require_auth
+def export_subscribe():
+    return base64.b64encode('\n'.join(collect()))
+
 if __name__ == '__main__':
-    app.run(port=80)
+    app.run(host='0.0.0.0', port=80)
