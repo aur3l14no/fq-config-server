@@ -1,9 +1,7 @@
 import yaml
-import re
 import requests
 import json
 import base64
-from functools import wraps
 from flask import Flask, request, abort, make_response
 
 clash_config_template = '''
@@ -17,9 +15,12 @@ Rule:
 - FINAL,DIRECT
 '''
 
-custom_filter = lambda x: '维护' not in x and \
-                '倍率' not in x and \
-                ('美国' in x or '专线' in x or '[自建]' in x)
+
+def custom_filter(x):
+    return '维护' not in x and \
+           '倍率' not in x and \
+           ('美国' in x or '专线' in x or '[自建]' in x)
+
 
 def collect():
     '''collect from all sources and return a list of vmess urls
@@ -37,6 +38,7 @@ def collect():
             vmess_list.append(x)
     return vmess_list
 
+
 def export_clash_config():
     vmess_list = collect()
     proxies = []
@@ -48,13 +50,20 @@ def export_clash_config():
     y = yaml.safe_load(clash_config_template)
     y['Proxy'] = proxies
     y['Proxy Group'] = [{
-        'name': 'Bundle',
+        'name': 'auto',
         'type': 'url-test',
+        'url': 'http://www.gstatic.com/generate_204',
+        'interval': 600,
+        'proxies': names
+        }, {
+        'name': 'manual',
+        'type': 'select',
         'url': 'http://www.gstatic.com/generate_204',
         'interval': 600,
         'proxies': names
     }]
     return yaml.safe_dump(y, encoding='utf-8', allow_unicode=True)
+
 
 def vmess_to_clash_json(vmess_url):
     vmess_raw = base64.b64decode(vmess_url.replace('vmess://', ''))
@@ -83,6 +92,7 @@ def vmess_to_clash_json(vmess_url):
 def require_auth(f):
     with open('config.yml') as fp:
         token = yaml.safe_load(fp.read())['token']
+
     def g():
         x = request.args.get('token', '')
         if x != token:
@@ -91,11 +101,14 @@ def require_auth(f):
     g.__name__ = f.__name__
     return g
 
-app = Flask(__name__) #记住这里的变量名app
+
+app = Flask(__name__)
+
 
 @app.route('/')
 def hello():
     return 'Hey, fuck gfw!'
+
 
 @app.route('/stat')
 @require_auth
@@ -103,18 +116,23 @@ def stat():
     with open('config.yml') as f:
         return f.read()
 
+
 @app.route('/clash')
 @require_auth
 def export_clash():
     response = make_response(export_clash_config())
-    response.headers['Content-Type'] = 'application/octet-stream; charset=utf-8'
-    response.headers['Content-Disposition'] = 'attachment; filename="config.yml"'
+    response.headers['Content-Type'] = \
+        'application/octet-stream; charset=utf-8'
+    response.headers['Content-Disposition'] = \
+        'attachment; filename="config.yml"'
     return response
+
 
 @app.route('/subscribe')
 @require_auth
 def export_subscribe():
     return base64.b64encode('\n'.join(collect()))
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=80)
