@@ -134,4 +134,6 @@ def get_clash_saved():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80)
+    with open('config.yml') as fp:
+        port = yaml.safe_load(fp.read())['port']
+    app.run(host='0.0.0.0', port=port)
