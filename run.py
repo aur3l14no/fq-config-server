@@ -2,83 +2,62 @@ import yaml
 import requests
 import json
 import base64
+import re
+from collections import OrderedDict
 from flask import Flask, request, abort, make_response
 
-def _filter(sub):
-    name = sub['name']
-    return '维护' not in name and \
-            '倍' not in name and \
-            ('美国' in name or '专线' in name or '[自建]' in name)
 
-grouped_vmess = []
+proxy_group = {}
+
+
+def decode_vmess(vmess_url):
+    vmess_raw = base64.b64decode(
+        vmess_url.replace('vmess://', '')).decode('utf8')
+    j = json.loads(vmess_raw)
+    return j
+
+
+def encode_vmess(j):
+    s = json.dumps(j)
+    return 'vmess://' + base64.b64encode(s.encode('utf8')).decode('utf8')
 
 
 def collect():
-    '''collect from all sources to `grouped_vmess`
+    '''collect from all sources to `proxy_group`
     '''
-    global grouped_vmess
-    grouped_vmess = []
+    global proxy_group
     with open('config.yml') as f:
         config = yaml.safe_load(f.read())
-    if 'subscribe' in config:
-        sub = config['subscribe'][0]
-        url = sub['url']
-        r = requests.get(url)
-        vmesses = base64.b64decode(r.text).decode('ascii').splitlines()
-        grouped_vmess.append({
-            'name': f'sub-{sub["name"]}',
-            'vmesses': vmesses
-        })
-    if 'vmess' in config:
-        grouped_vmess.append({
-            'name': 'other',
-            'vmesses': config['vmess']
-        })
+    for proxy in config['proxies']:
+        if not proxy['name'] in proxy_group:
+            proxy_group[proxy['name']] = []
+        vmesses = []
 
+        if proxy['type'] == 'subscribe':
+            r = requests.get(proxy['url'])
+            vmesses = base64.b64decode(r.text).decode('utf8').splitlines()
+        elif proxy['type'] == 'vmess':
+            vmesses = [proxy['url']]
 
-def export_clash_config():
-    global grouped_vmess
+        if 'regex' in proxy:
+            vmesses = [v for v in vmesses if re.match(
+                proxy['regex'], decode_vmess(v)['ps'])]
+        if 'rename_from' in proxy:
+            def _repl(v):
+                j = decode_vmess(v)
+                j.update(
+                    {'ps': re.sub(proxy['rename_from'], proxy['rename_to'], j['ps'])})
+                return encode_vmess(j)
+            vmesses = [_repl(v) for v in vmesses]
 
-    vmesses = []
-    for group in grouped_vmess[:-1]:
-        vmesses.extend(group['vmesses'])    
-    sub_proxies = [*filter(_filter, map(vmess_to_clash_json, vmesses))]
-
-    vmesses = grouped_vmess[-1]['vmesses']
-    other_proxies = [*filter(_filter, map(vmess_to_clash_json, vmesses))]
-    
-    yaml_scratch = ''
-    with open('Head.yml') as f:
-        yaml_scratch += f.read() + '\n'
-    with open('Rule.yml') as f:
-        yaml_scratch += f.read() + '\n'
-    y = yaml.safe_load(yaml_scratch)
-
-    y['Proxy'] = sub_proxies + other_proxies
-    y['Proxy Group'] = [{
-        'name': 'Proxy',
-        'type': 'select',
-        'proxies': ['sub', 'other']
-        }, {
-        'name': 'sub',
-        'type': 'url-test',
-        'url': 'http://www.gstatic.com/generate_204',
-        'interval': 600,
-        'proxies': [*map(lambda x: x['name'], sub_proxies)]
-        }, {
-        'name': 'other',
-        'type': 'select',
-        'proxies': [*map(lambda x: x['name'], other_proxies)]
-    }]
-    y['Rule']
-    return yaml.safe_dump(y, encoding='utf-8', allow_unicode=True)
+        proxy_group[proxy['name']].extend(vmesses)
 
 
 def vmess_to_clash_json(vmess_url):
     vmess_raw = base64.b64decode(vmess_url.replace('vmess://', ''))
     j = json.loads(vmess_raw)
     r = {
-        'name': j['ps'].replace('233v2.com_', '[自建] '),
+        'name': j['ps'],
         'type': 'vmess',
         'server': j['add'],
         'port': int(j['port']),
@@ -111,6 +90,13 @@ def require_auth(f):
     return g
 
 
+def debug_print(proxy_group):
+    for p in proxy_group:
+        print(p)
+        for x in proxy_group[p]:
+            print(decode_vmess(x))
+
+
 app = Flask(__name__)
 
 
@@ -126,37 +112,26 @@ def stat():
         return f.read()
 
 
-@app.route('/clash')
-@require_auth
-def export_clash():
-    collect()
-    response = make_response(export_clash_config())
-    response.headers['Content-Type'] = \
-        'application/octet-stream; charset=utf-8'
-    response.headers['Content-Disposition'] = \
-        'attachment; filename="config.yml"'
-    return response
-
-
 @app.route('/subscribe')
 @require_auth
 def export_subscribe():
     collect()
     all_vmess = []
-    for x in grouped_vmess:
-        all_vmess.extend(x['vmesses'])
-    return base64.b64encode('\n'.join(set(all_vmess)))
+    for x in proxy_group:
+        all_vmess.extend(proxy_group[x])
+    return base64.b64encode('\n'.join(list(OrderedDict.fromkeys(all_vmess)))
+                            .encode('utf8')).decode('utf8')
+
 
 @app.route('/clash_saved')
 @require_auth
 def get_clash_saved():
     with open('Clash.yml') as f:
         response = make_response(f.read())
-    response.headers['Content-Type'] = \
-        'application/octet-stream; charset=utf-8'
-    response.headers['Content-Disposition'] = \
-        'attachment; filename="config.yml"'
+    response.headers['Content-Type'] = 'application/octet-stream; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename="config.yml"'
     return response
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=80)
