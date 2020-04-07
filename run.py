@@ -26,6 +26,7 @@ def collect():
     '''collect from all sources to `proxy_group`
     '''
     global proxy_group
+    proxy_group = {}
     with open('config.yml') as f:
         config = yaml.safe_load(f.read())
     for proxy in config['proxies']:
