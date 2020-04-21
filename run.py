@@ -123,6 +123,16 @@ def export_subscribe():
     return base64.b64encode('\n'.join(list(OrderedDict.fromkeys(all_vmess)))
                             .encode('utf8')).decode('utf8')
 
+@app.route('/sub')
+@require_auth
+def export_public_subscribe():
+    collect()
+    all_vmess = []
+    for x in proxy_group:
+        if x == 'self':
+            all_vmess.extend(proxy_group[x])
+    return base64.b64encode('\n'.join(list(OrderedDict.fromkeys(all_vmess)))
+                            .encode('utf8')).decode('utf8')
 
 @app.route('/clash_saved')
 @require_auth
